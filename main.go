@@ -59,10 +59,17 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("Upgrade error:", err)
 		return
 	}
-	defer conn.Close()
 
 	var currentPlayer *Player
 	var currentRoom *GameRoom
+	
+	defer func() {
+		conn.Close()
+		// Clean up player when connection closes
+		if currentPlayer != nil && currentRoom != nil {
+			removePlayerFromRoom(currentRoom, currentPlayer.ID)
+		}
+	}()
 
 	for {
 		var msg map[string]interface{}
@@ -88,13 +95,49 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			roomsMutex.Unlock()
 
 			room.Mutex.Lock()
-			room.Players = append(room.Players, currentPlayer)
+			
+			// Check if player is already in the room (re-joining)
+			existingPlayerIndex := -1
+			for i, p := range room.Players {
+				if p.ID == playerID {
+					existingPlayerIndex = i
+					break
+				}
+			}
+			
+			if existingPlayerIndex != -1 {
+				// Player is re-joining - replace their connection
+				room.Players[existingPlayerIndex] = currentPlayer
+				log.Printf("Player %s re-joined room %s (replacing old connection)", playerID, roomID)
+				
+				// If game was in progress, restart it for the re-joining player
+				if room.Round > 0 {
+					log.Printf("Restarting game in room %s due to player re-join", roomID)
+					startGame(room)
+				}
+			} else {
+				// New player joining
+				if len(room.Players) >= 2 {
+					log.Printf("Player %s tried to join full room %s", playerID, roomID)
+					if err := currentPlayer.Conn.WriteJSON(map[string]interface{}{
+						"action":  "error",
+						"message": "Room is full",
+					}); err != nil {
+						log.Println("Error sending error message:", err)
+					}
+					return
+				}
+				room.Players = append(room.Players, currentPlayer)
+				log.Printf("Player %s joined room %s (new player)", playerID, roomID)
+			}
+			
 			playerCount := len(room.Players)
 			currentRoom = room
 			room.Mutex.Unlock()
 
 			// Always send response to joining player
 			if playerCount == 1 {
+				log.Printf("First player in room %s, sending waiting message", roomID)
 				if err := currentPlayer.Conn.WriteJSON(map[string]interface{}{
 					"action":  "waiting",
 					"message": "Waiting for another player to join...",
@@ -104,33 +147,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if playerCount == 2 {
+				// Start or restart game when we have 2 players
 				log.Printf("Second player joined room %s, starting game!", roomID)
-				// Second player joins — start game
-				shuffled := append([]Card{}, Deck...)
-				rand.Seed(time.Now().UnixNano())
-				rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-
-				mid := len(shuffled) / 2
-				room.Players[0].Deck = append([]Card{}, shuffled[:mid]...)
-				room.Players[1].Deck = append([]Card{}, shuffled[mid:]...)
-
-				room.Round = 1
-				room.TurnIndex = rand.Intn(2)
-				log.Printf("Game started in room %s, turn index: %d", roomID, room.TurnIndex)
-
-				for i, p := range room.Players {
-					opponent := room.Players[1-i]
-					if err := p.Conn.WriteJSON(map[string]interface{}{
-						"action":           "start",
-						"yourTopCard":      p.Deck[0],
-						"opponentTopCard":  opponent.Deck[0],
-						"yourDeckSize":     len(p.Deck),
-						"opponentDeckSize": len(opponent.Deck),
-						"yourTurn":         i == room.TurnIndex,
-					}); err != nil {
-						log.Println("Error sending start message:", err)
-					}
-				}
+				startGame(room)
 			}
 
 		case "playCard":
@@ -164,6 +183,69 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+}
+
+// startGame initializes or restarts a game for a room
+func startGame(room *GameRoom) {
+	// Reset game state
+	room.Round = 1
+	room.TurnIndex = rand.Intn(2)
+	
+	// Clear any existing game state
+	for _, p := range room.Players {
+		p.Deck = nil
+		p.Card = nil
+		p.Attr = ""
+	}
+	
+	// Shuffle and deal cards
+	shuffled := append([]Card{}, Deck...)
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+
+	mid := len(shuffled) / 2
+	room.Players[0].Deck = append([]Card{}, shuffled[:mid]...)
+	room.Players[1].Deck = append([]Card{}, shuffled[mid:]...)
+
+	// Send start messages to all players
+	for i, p := range room.Players {
+		opponent := room.Players[1-i]
+		if err := p.Conn.WriteJSON(map[string]interface{}{
+			"action":           "start",
+			"yourTopCard":      p.Deck[0],
+			"opponentTopCard":  opponent.Deck[0],
+			"yourDeckSize":     len(p.Deck),
+			"opponentDeckSize": len(opponent.Deck),
+			"yourTurn":         i == room.TurnIndex,
+		}); err != nil {
+			log.Println("Error sending start message:", err)
+		}
+	}
+	
+	log.Printf("Game started/restarted in room %s", room.ID)
+}
+
+// removePlayerFromRoom removes a player from a room and handles cleanup
+func removePlayerFromRoom(room *GameRoom, playerID string) {
+	room.Mutex.Lock()
+	defer room.Mutex.Unlock()
+	
+	// Find and remove the player
+	for i, p := range room.Players {
+		if p.ID == playerID {
+			room.Players = append(room.Players[:i], room.Players[i+1:]...)
+			log.Printf("Player %s removed from room %s", playerID, room.ID)
+			break
+		}
+	}
+	
+	// If room is empty, remove it entirely
+	if len(room.Players) == 0 {
+		roomsMutex.Lock()
+		delete(rooms, room.ID)
+		roomsMutex.Unlock()
+		log.Printf("Room %s removed (empty)", room.ID)
 	}
 }
 
