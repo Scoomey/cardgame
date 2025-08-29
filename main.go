@@ -16,8 +16,8 @@ type Player struct {
 	ID   string
 	Conn *websocket.Conn
 	Deck []Card
-	Card *Card  // card currently played
-	Attr string // chosen attribute
+	Card *Card
+	Attr string
 }
 
 // Card represents a mythical creature card
@@ -33,9 +33,10 @@ type GameRoom struct {
 	Players   []*Player
 	Mutex     sync.Mutex
 	Round     int
-	TurnIndex int // which player chooses attribute
+	TurnIndex int // index of player whose turn it is
 }
 
+// Sample exotic deck
 var Deck = []Card{
 	{"Dragon", map[string]int{"Strength": 95, "Speed": 60, "Magic": 90}, "dragon.png"},
 	{"Phoenix", map[string]int{"Strength": 70, "Speed": 80, "Magic": 95}, "phoenix.png"},
@@ -65,8 +66,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		var msg map[string]interface{}
-		err := conn.ReadJSON(&msg)
-		if err != nil {
+		if err := conn.ReadJSON(&msg); err != nil {
 			log.Println("Read error:", err)
 			break
 		}
@@ -91,16 +91,18 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			currentRoom = room
 			room.Mutex.Unlock()
 
+			// Always send response to joining player
 			if len(room.Players) == 1 {
-				// Send waiting message to first player
-				currentPlayer.Conn.WriteJSON(map[string]interface{}{
+				if err := currentPlayer.Conn.WriteJSON(map[string]interface{}{
 					"action":  "waiting",
 					"message": "Waiting for another player to join...",
-				})
+				}); err != nil {
+					log.Println("Error sending waiting message:", err)
+				}
 			}
 
 			if len(room.Players) == 2 {
-				// Start game: shuffle deck and deal half to each player
+				// Second player joins — start game
 				shuffled := append([]Card{}, Deck...)
 				rand.Seed(time.Now().UnixNano())
 				rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
@@ -109,19 +111,21 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				room.Players[0].Deck = append([]Card{}, shuffled[:mid]...)
 				room.Players[1].Deck = append([]Card{}, shuffled[mid:]...)
 
-				// Randomly pick who goes first
-				room.TurnIndex = rand.Intn(2)
 				room.Round = 1
+				room.TurnIndex = rand.Intn(2)
 
 				for i, p := range room.Players {
-					p.Conn.WriteJSON(map[string]interface{}{
+					opponent := room.Players[1-i]
+					if err := p.Conn.WriteJSON(map[string]interface{}{
 						"action":           "start",
 						"yourTopCard":      p.Deck[0],
-						"opponentTopCard":  room.Players[1-i].Deck[0],
+						"opponentTopCard":  opponent.Deck[0],
 						"yourDeckSize":     len(p.Deck),
-						"opponentDeckSize": len(room.Players[1-i].Deck),
+						"opponentDeckSize": len(opponent.Deck),
 						"yourTurn":         i == room.TurnIndex,
-					})
+					}); err != nil {
+						log.Println("Error sending start message:", err)
+					}
 				}
 			}
 
@@ -133,7 +137,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			cardMap := msg["card"].(map[string]interface{})
 			attr := msg["attribute"].(string)
 
-			// top card should match played card
+			// Ensure player plays top card
 			if currentPlayer.Deck[0].Name != cardMap["name"].(string) {
 				log.Println("Played card does not match top card")
 				continue
@@ -142,7 +146,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			currentPlayer.Card = &currentPlayer.Deck[0]
 			currentPlayer.Attr = attr
 
-			// Wait until both players have played
 			if len(currentRoom.Players) == 2 {
 				p1 := currentRoom.Players[0]
 				p2 := currentRoom.Players[1]
@@ -150,11 +153,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				if p1.Card != nil && p2.Card != nil {
 					resolveRound(currentRoom, p1, p2)
 
-					// reset round cards
 					p1.Card, p1.Attr = nil, ""
 					p2.Card, p2.Attr = nil, ""
 					currentRoom.Round++
-					// Alternate turn
 					currentRoom.TurnIndex = 1 - currentRoom.TurnIndex
 				}
 			}
@@ -182,7 +183,6 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 	p1.Deck = p1.Deck[1:]
 	p2.Deck = p2.Deck[1:]
 
-	// Check game over
 	var gameOver string
 	if len(p1.Deck) == 0 {
 		gameOver = p2.ID
@@ -190,11 +190,9 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 		gameOver = p1.ID
 	}
 
-	// Send round results (only top card + deck sizes)
 	for i, p := range room.Players {
 		opponent := room.Players[1-i]
-		topCard := (*Card)(nil)
-		opTopCard := (*Card)(nil)
+		var topCard, opTopCard *Card
 		if len(p.Deck) > 0 {
 			topCard = &p.Deck[0]
 		}
@@ -217,7 +215,10 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 			"gameOver": gameOver,
 			"yourTurn": i == room.TurnIndex,
 		}
-		p.Conn.WriteJSON(result)
+
+		if err := p.Conn.WriteJSON(result); err != nil {
+			log.Println("Error sending round result:", err)
+		}
 	}
 }
 
