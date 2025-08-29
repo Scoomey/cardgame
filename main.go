@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -18,12 +20,29 @@ type Player struct {
 	Attr string // chosen attribute
 }
 
+// Card represents a mythical creature card
+type Card struct {
+	Name  string
+	Stats map[string]int
+	Image string
+}
+
 // GameRoom represents a game between 2 players
 type GameRoom struct {
-	ID      string
-	Players []*Player
-	Mutex   sync.Mutex
-	Round   int
+	ID        string
+	Players   []*Player
+	Mutex     sync.Mutex
+	Round     int
+	TurnIndex int // which player chooses attribute
+}
+
+var Deck = []Card{
+	{"Dragon", map[string]int{"Strength": 95, "Speed": 60, "Magic": 90}, "dragon.png"},
+	{"Phoenix", map[string]int{"Strength": 70, "Speed": 80, "Magic": 95}, "phoenix.png"},
+	{"Unicorn", map[string]int{"Strength": 65, "Speed": 75, "Magic": 85}, "unicorn.png"},
+	{"Griffin", map[string]int{"Strength": 80, "Speed": 70, "Magic": 60}, "griffin.png"},
+	{"Kraken", map[string]int{"Strength": 85, "Speed": 50, "Magic": 80}, "kraken.png"},
+	{"Chimera", map[string]int{"Strength": 75, "Speed": 65, "Magic": 70}, "chimera.png"},
 }
 
 var upgrader = websocket.Upgrader{
@@ -58,6 +77,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			playerID := msg["player"].(string)
 			currentPlayer = &Player{ID: playerID, Conn: conn}
 
+			// Get or create room
 			roomsMutex.Lock()
 			room, exists := rooms[roomID]
 			if !exists {
@@ -71,16 +91,36 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			currentRoom = room
 			room.Mutex.Unlock()
 
-			if len(room.Players) == 2 {
-				// Start game: deal half deck each
-				mid := len(Deck) / 2
-				room.Players[0].Deck = append([]Card{}, Deck[:mid]...)
-				room.Players[1].Deck = append([]Card{}, Deck[mid:]...)
+			if len(room.Players) == 1 {
+				// Send waiting message to first player
+				currentPlayer.Conn.WriteJSON(map[string]interface{}{
+					"action":  "waiting",
+					"message": "Waiting for another player to join...",
+				})
+			}
 
-				for _, p := range room.Players {
+			if len(room.Players) == 2 {
+				// Start game: shuffle deck and deal half to each player
+				shuffled := append([]Card{}, Deck...)
+				rand.Seed(time.Now().UnixNano())
+				rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+
+				mid := len(shuffled) / 2
+				room.Players[0].Deck = append([]Card{}, shuffled[:mid]...)
+				room.Players[1].Deck = append([]Card{}, shuffled[mid:]...)
+
+				// Randomly pick who goes first
+				room.TurnIndex = rand.Intn(2)
+				room.Round = 1
+
+				for i, p := range room.Players {
 					p.Conn.WriteJSON(map[string]interface{}{
-						"action": "start",
-						"deck":   p.Deck,
+						"action":           "start",
+						"yourTopCard":      p.Deck[0],
+						"opponentTopCard":  room.Players[1-i].Deck[0],
+						"yourDeckSize":     len(p.Deck),
+						"opponentDeckSize": len(room.Players[1-i].Deck),
+						"yourTurn":         i == room.TurnIndex,
 					})
 				}
 			}
@@ -93,34 +133,29 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			cardMap := msg["card"].(map[string]interface{})
 			attr := msg["attribute"].(string)
 
-			// find card in player's deck (assume always top card for MVP)
-			var chosenCard *Card
-			for i := range currentPlayer.Deck {
-				if currentPlayer.Deck[i].Name == cardMap["name"].(string) {
-					chosenCard = &currentPlayer.Deck[i]
-					break
-				}
-			}
-
-			if chosenCard == nil {
-				log.Println("Card not found in player's deck")
+			// top card should match played card
+			if currentPlayer.Deck[0].Name != cardMap["name"].(string) {
+				log.Println("Played card does not match top card")
 				continue
 			}
 
-			currentPlayer.Card = chosenCard
+			currentPlayer.Card = &currentPlayer.Deck[0]
 			currentPlayer.Attr = attr
 
-			// check if both players have played
+			// Wait until both players have played
 			if len(currentRoom.Players) == 2 {
 				p1 := currentRoom.Players[0]
 				p2 := currentRoom.Players[1]
 
 				if p1.Card != nil && p2.Card != nil {
 					resolveRound(currentRoom, p1, p2)
-					// reset round
+
+					// reset round cards
 					p1.Card, p1.Attr = nil, ""
 					p2.Card, p2.Attr = nil, ""
 					currentRoom.Round++
+					// Alternate turn
+					currentRoom.TurnIndex = 1 - currentRoom.TurnIndex
 				}
 			}
 		}
@@ -128,7 +163,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func resolveRound(room *GameRoom, p1, p2 *Player) {
-	attr := p1.Attr // assume same attr chosen for MVP
+	attr := p1.Attr
 	val1 := p1.Card.Stats[attr]
 	val2 := p2.Card.Stats[attr]
 
@@ -139,20 +174,13 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 		winner = p2
 	}
 
-	// Winner takes both cards (append to bottom of deck, remove from losers)
 	if winner != nil {
 		winner.Deck = append(winner.Deck, *p1.Card, *p2.Card)
-
-		// remove top cards (simplest way — rebuild slice)
-		p1.Deck = removeCard(p1.Deck, p1.Card.Name)
-		p2.Deck = removeCard(p2.Deck, p2.Card.Name)
-	} else {
-		// draw → cards go back to each deck’s bottom
-		p1.Deck = append(p1.Deck, *p1.Card)
-		p1.Deck = removeCard(p1.Deck, p1.Card.Name)
-		p2.Deck = append(p2.Deck, *p2.Card)
-		p2.Deck = removeCard(p2.Deck, p2.Card.Name)
 	}
+
+	// Remove top cards
+	p1.Deck = p1.Deck[1:]
+	p2.Deck = p2.Deck[1:]
 
 	// Check game over
 	var gameOver string
@@ -162,40 +190,35 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 		gameOver = p1.ID
 	}
 
-	// Notify both players
-	for _, p := range room.Players {
+	// Send round results (only top card + deck sizes)
+	for i, p := range room.Players {
+		opponent := room.Players[1-i]
+		topCard := (*Card)(nil)
+		opTopCard := (*Card)(nil)
+		if len(p.Deck) > 0 {
+			topCard = &p.Deck[0]
+		}
+		if len(opponent.Deck) > 0 {
+			opTopCard = &opponent.Deck[0]
+		}
+
 		result := map[string]interface{}{
-			"action": "roundResult",
-			"round":  room.Round,
-			"p1Card": p1.Card,
-			"p2Card": p2.Card,
-			"attr":   attr,
+			"action":           "roundResult",
+			"yourTopCard":      topCard,
+			"opponentTopCard":  opTopCard,
+			"yourDeckSize":     len(p.Deck),
+			"opponentDeckSize": len(opponent.Deck),
 			"winner": func() string {
 				if winner != nil {
 					return winner.ID
-				} else {
-					return "draw"
 				}
+				return "draw"
 			}(),
-			"p1Deck":   len(p1.Deck),
-			"p2Deck":   len(p2.Deck),
 			"gameOver": gameOver,
+			"yourTurn": i == room.TurnIndex,
 		}
 		p.Conn.WriteJSON(result)
 	}
-}
-
-func removeCard(deck []Card, name string) []Card {
-	newDeck := []Card{}
-	removed := false
-	for _, c := range deck {
-		if c.Name == name && !removed {
-			removed = true
-			continue
-		}
-		newDeck = append(newDeck, c)
-	}
-	return newDeck
 }
 
 func main() {
