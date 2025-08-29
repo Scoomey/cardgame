@@ -153,30 +153,61 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			cardMap := msg["card"].(map[string]interface{})
-			attr := msg["attribute"].(string)
-
-			// Ensure player plays top card
-			if currentPlayer.Deck[0].Name != cardMap["name"].(string) {
-				log.Println("Played card does not match top card")
+			// Check if it's this player's turn
+			playerIndex := -1
+			for i, p := range currentRoom.Players {
+				if p.ID == currentPlayer.ID {
+					playerIndex = i
+					break
+				}
+			}
+			
+			if playerIndex == -1 {
+				log.Printf("Player %s not found in room", currentPlayer.ID)
+				continue
+			}
+			
+			if playerIndex != currentRoom.TurnIndex {
+				log.Printf("Player %s tried to play out of turn", currentPlayer.ID)
 				continue
 			}
 
+			// Only need the attribute, not the card
+			attr := msg["attribute"].(string)
+			
+			// Set the current player's card and attribute
 			currentPlayer.Card = &currentPlayer.Deck[0]
 			currentPlayer.Attr = attr
+			
+			log.Printf("Player %s played attribute %s for card %s", currentPlayer.ID, attr, currentPlayer.Card.Name)
 
+			// Resolve the round immediately when current player plays
 			if len(currentRoom.Players) == 2 {
 				p1 := currentRoom.Players[0]
 				p2 := currentRoom.Players[1]
+				
+				// Automatically resolve the round using both players' top cards
+				// The current player's card is already set, now set the opponent's card
+				opponentIndex := 1 - playerIndex
+				opponent := currentRoom.Players[opponentIndex]
+				
+				// Set opponent's card (they don't need to choose attribute, use a default or random one)
+				opponent.Card = &opponent.Deck[0]
+				// For now, use the same attribute as the current player
+				opponent.Attr = attr
+				
+				log.Printf("Resolving round: %s vs %s with attribute %s", 
+					currentPlayer.Card.Name, opponent.Card.Name, attr)
+				
+				// Resolve the round
+				resolveRound(currentRoom, p1, p2)
 
-				if p1.Card != nil && p2.Card != nil {
-					resolveRound(currentRoom, p1, p2)
-
-					p1.Card, p1.Attr = nil, ""
-					p2.Card, p2.Attr = nil, ""
-					currentRoom.Round++
-					currentRoom.TurnIndex = 1 - currentRoom.TurnIndex
-				}
+				// Clear played cards and attributes
+				p1.Card, p1.Attr = nil, ""
+				p2.Card, p2.Attr = nil, ""
+				currentRoom.Round++
+				
+				// Note: TurnIndex will be set by resolveRound based on winner
 			}
 		}
 	}
@@ -270,6 +301,22 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 		gameOver = p2.ID
 	} else if len(p2.Deck) == 0 {
 		gameOver = p1.ID
+	}
+
+	// Set the next turn based on the winner
+	if winner != nil {
+		// Winner gets the next turn
+		for i, p := range room.Players {
+			if p.ID == winner.ID {
+				room.TurnIndex = i
+				break
+			}
+		}
+		log.Printf("Player %s won the round and gets the next turn", winner.ID)
+	} else {
+		// In case of a draw, alternate turns
+		room.TurnIndex = 1 - room.TurnIndex
+		log.Printf("Round was a draw, turn alternates to player %d", room.TurnIndex)
 	}
 
 	for i, p := range room.Players {
