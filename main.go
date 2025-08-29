@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -82,6 +83,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		case "join":
 			roomID := msg["room"].(string)
 			playerID := msg["player"].(string)
+			log.Printf("Player %s joining room %s", playerID, roomID)
 			currentPlayer = &Player{ID: playerID, Conn: conn}
 
 			// Get or create room
@@ -130,11 +132,13 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Player %s joined room %s (new player)", playerID, roomID)
 			}
 			
+			playerCount := len(room.Players)
 			currentRoom = room
 			room.Mutex.Unlock()
 
 			// Always send response to joining player
-			if len(room.Players) == 1 {
+			if playerCount == 1 {
+				log.Printf("First player in room %s, sending waiting message", roomID)
 				if err := currentPlayer.Conn.WriteJSON(map[string]interface{}{
 					"action":  "waiting",
 					"message": "Waiting for another player to join...",
@@ -143,8 +147,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if len(room.Players) == 2 {
+			if playerCount == 2 {
 				// Start or restart game when we have 2 players
+				log.Printf("Second player joined room %s, starting game!", roomID)
 				startGame(room)
 			}
 
@@ -353,10 +358,37 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 
 func main() {
 	http.HandleFunc("/ws", wsHandler)
+	
+	// Status endpoint for monitoring
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		roomsMutex.Lock()
+		defer roomsMutex.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		status := map[string]interface{}{
+			"status":       "running",
+			"rooms":        len(rooms),
+			"active_rooms": make(map[string]interface{}),
+		}
+
+		for roomID, room := range rooms {
+			room.Mutex.Lock()
+			status["active_rooms"].(map[string]interface{})[roomID] = map[string]interface{}{
+				"players": len(room.Players),
+				"round":   room.Round,
+			}
+			room.Mutex.Unlock()
+		}
+
+		// Convert to JSON properly
+		json.NewEncoder(w).Encode(status)
+	})
+
 	fmt.Println("✅ Server started on 0.0.0.0:8080")
 	fmt.Println("🌐 Accessible at:")
 	fmt.Println("   - Local: http://localhost:8080")
 	fmt.Println("   - Network: http://10.8.183.4:8080")
 	fmt.Println("   - WebSocket: ws://10.8.183.4:8080/ws")
+	fmt.Println("📊 Status endpoint available at /status")
 	log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
 }

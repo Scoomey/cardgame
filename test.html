@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Card Game Test</title>
+</head>
+<body>
+    <h1>Card Game WebSocket Test</h1>
+    
+    <div>
+        <h2>Player 1</h2>
+        <input id="player1Name" value="player1" placeholder="Player 1 Name">
+        <input id="room1Id" value="testroom1" placeholder="Room ID">
+        <button onclick="connectPlayer1()">Connect Player 1</button>
+        <div id="player1Status">Not connected</div>
+        <div id="player1Messages"></div>
+    </div>
+    
+    <div>
+        <h2>Player 2</h2>
+        <input id="player2Name" value="player2" placeholder="Player 2 Name">
+        <input id="room2Id" value="testroom1" placeholder="Room ID">
+        <button onclick="connectPlayer2()">Connect Player 2</button>
+        <div id="player2Status">Not connected</div>
+        <div id="player2Messages"></div>
+    </div>
+    
+    <div>
+        <h2>Server Status</h2>
+        <button onclick="checkStatus()">Check Status</button>
+        <div id="serverStatus"></div>
+    </div>
+
+    <script>
+        let ws1, ws2;
+        
+        function connectPlayer1() {
+            const name = document.getElementById('player1Name').value;
+            const room = document.getElementById('room1Id').value;
+            
+            ws1 = new WebSocket('ws://localhost:8080/ws');
+            
+            ws1.onopen = () => {
+                document.getElementById('player1Status').textContent = 'Connected';
+                ws1.send(JSON.stringify({
+                    action: 'join',
+                    room: room,
+                    player: name
+                }));
+            };
+            
+            ws1.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                document.getElementById('player1Messages').innerHTML += '<div>' + JSON.stringify(msg) + '</div>';
+                console.log('Player 1 received:', msg);
+            };
+            
+            ws1.onerror = (err) => {
+                document.getElementById('player1Status').textContent = 'Error: ' + err;
+            };
+        }
+        
+        function connectPlayer2() {
+            const name = document.getElementById('player2Name').value;
+            const room = document.getElementById('room2Id').value;
+            
+            ws2 = new WebSocket('ws://localhost:8080/ws');
+            
+            ws2.onopen = () => {
+                document.getElementById('player2Status').textContent = 'Connected';
+                ws2.send(JSON.stringify({
+                    action: 'join',
+                    room: room,
+                    player: name
+                }));
+            };
+            
+            ws2.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                document.getElementById('player2Messages').innerHTML += '<div>' + JSON.stringify(msg) + '</div>';
+                console.log('Player 2 received:', msg);
+            };
+            
+            ws2.onerror = (err) => {
+                document.getElementById('player2Status').textContent = 'Error: ' + err;
+            };
+        }
+        
+        function checkStatus() {
+            fetch('http://localhost:8080/status')
+                .then(response => response.text())
+                .then(data => {
+                    document.getElementById('serverStatus').textContent = data;
+                })
+                .catch(err => {
+                    document.getElementById('serverStatus').textContent = 'Error: ' + err;
+                });
+        }
+    </script>
+</body>
+</html>
