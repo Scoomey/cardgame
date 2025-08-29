@@ -75,6 +75,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		case "join":
 			roomID := msg["room"].(string)
 			playerID := msg["player"].(string)
+			log.Printf("Player %s joining room %s", playerID, roomID)
 			currentPlayer = &Player{ID: playerID, Conn: conn}
 
 			// Get or create room
@@ -88,11 +89,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 			room.Mutex.Lock()
 			room.Players = append(room.Players, currentPlayer)
+			playerCount := len(room.Players)
 			currentRoom = room
 			room.Mutex.Unlock()
 
 			// Always send response to joining player
-			if len(room.Players) == 1 {
+			if playerCount == 1 {
 				if err := currentPlayer.Conn.WriteJSON(map[string]interface{}{
 					"action":  "waiting",
 					"message": "Waiting for another player to join...",
@@ -101,7 +103,8 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if len(room.Players) == 2 {
+			if playerCount == 2 {
+				log.Printf("Second player joined room %s, starting game!", roomID)
 				// Second player joins — start game
 				shuffled := append([]Card{}, Deck...)
 				rand.Seed(time.Now().UnixNano())
@@ -113,6 +116,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 				room.Round = 1
 				room.TurnIndex = rand.Intn(2)
+				log.Printf("Game started in room %s, turn index: %d", roomID, room.TurnIndex)
 
 				for i, p := range room.Players {
 					opponent := room.Players[1-i]
@@ -224,6 +228,30 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 
 func main() {
 	http.HandleFunc("/ws", wsHandler)
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		roomsMutex.Lock()
+		defer roomsMutex.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		status := map[string]interface{}{
+			"status":       "running",
+			"rooms":        len(rooms),
+			"active_rooms": make(map[string]interface{}),
+		}
+
+		for roomID, room := range rooms {
+			room.Mutex.Lock()
+			status["active_rooms"].(map[string]interface{})[roomID] = map[string]interface{}{
+				"players": len(room.Players),
+				"round":   room.Round,
+			}
+			room.Mutex.Unlock()
+		}
+
+		fmt.Fprintf(w, "%v", status)
+	})
+
 	fmt.Println("✅ Server started on :8080")
+	fmt.Println("📊 Status endpoint available at /status")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
