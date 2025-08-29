@@ -353,6 +353,10 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 
 func main() {
 	http.HandleFunc("/ws", wsHandler)
-	fmt.Println("✅ Server started on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	fmt.Println("✅ Server started on 0.0.0.0:8080")
+	fmt.Println("🌐 Accessible at:")
+	fmt.Println("   - Local: http://localhost:8080")
+	fmt.Println("   - Network: http://10.8.183.4:8080")
+	fmt.Println("   - WebSocket: ws://10.8.183.4:8080/ws")
+	log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
 }
