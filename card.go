@@ -1,9 +1,10 @@
 package main
 
+// Card represents a Top Trumps card
 type Card struct {
-	Name  string            `json:"name"`
-	Stats map[string]int    `json:"stats"`
-	Image string            `json:"image"`
+	Name  string         `json:"name"`
+	Stats map[string]int `json:"stats"`
+	Image string         `json:"image"`
 }
 
 var Deck = []Card{
