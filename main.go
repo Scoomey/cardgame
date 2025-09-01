@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -39,12 +38,12 @@ type GameRoom struct {
 
 // Sample exotic deck
 var Deck = []Card{
-	{"Dragon", map[string]int{"Strength": 95, "Speed": 60, "Magic": 90}, "dragon.png"},
-	{"Phoenix", map[string]int{"Strength": 70, "Speed": 80, "Magic": 95}, "phoenix.png"},
-	{"Unicorn", map[string]int{"Strength": 65, "Speed": 75, "Magic": 85}, "unicorn.png"},
-	{"Griffin", map[string]int{"Strength": 80, "Speed": 70, "Magic": 60}, "griffin.png"},
-	{"Kraken", map[string]int{"Strength": 85, "Speed": 50, "Magic": 80}, "kraken.png"},
-	{"Chimera", map[string]int{"Strength": 75, "Speed": 65, "Magic": 70}, "chimera.png"},
+	{"Dragon", map[string]int{"Strength": 95, "Speed": 60, "Magic": 90}, "/dragon.svg"},
+	{"Phoenix", map[string]int{"Strength": 70, "Speed": 80, "Magic": 95}, "/phoenix.svg"},
+	{"Unicorn", map[string]int{"Strength": 65, "Speed": 75, "Magic": 85}, "/unicorn.svg"},
+	{"Griffin", map[string]int{"Strength": 80, "Speed": 70, "Magic": 60}, "/griffin.svg"},
+	{"Kraken", map[string]int{"Strength": 85, "Speed": 50, "Magic": 80}, "/kraken.svg"},
+	{"Chimera", map[string]int{"Strength": 75, "Speed": 65, "Magic": 70}, "/chimera.svg"},
 }
 
 var upgrader = websocket.Upgrader{
@@ -63,7 +62,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var currentPlayer *Player
 	var currentRoom *GameRoom
-	
+
 	defer func() {
 		conn.Close()
 		// Clean up player when connection closes
@@ -96,7 +95,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			roomsMutex.Unlock()
 
 			room.Mutex.Lock()
-			
+
 			// Check if player is already in the room (re-joining)
 			existingPlayerIndex := -1
 			for i, p := range room.Players {
@@ -105,12 +104,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
-			
+
 			if existingPlayerIndex != -1 {
 				// Player is re-joining - replace their connection
 				room.Players[existingPlayerIndex] = currentPlayer
 				log.Printf("Player %s re-joined room %s (replacing old connection)", playerID, roomID)
-				
+
 				// If game was in progress, restart it for the re-joining player
 				if room.Round > 0 {
 					log.Printf("Restarting game in room %s due to player re-join", roomID)
@@ -131,7 +130,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				room.Players = append(room.Players, currentPlayer)
 				log.Printf("Player %s joined room %s (new player)", playerID, roomID)
 			}
-			
+
 			playerCount := len(room.Players)
 			currentRoom = room
 			room.Mutex.Unlock()
@@ -166,12 +165,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
-			
+
 			if playerIndex == -1 {
 				log.Printf("Player %s not found in room", currentPlayer.ID)
 				continue
 			}
-			
+
 			if playerIndex != currentRoom.TurnIndex {
 				log.Printf("Player %s tried to play out of turn", currentPlayer.ID)
 				continue
@@ -179,31 +178,31 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Only need the attribute, not the card
 			attr := msg["attribute"].(string)
-			
+
 			// Set the current player's card and attribute
 			currentPlayer.Card = &currentPlayer.Deck[0]
 			currentPlayer.Attr = attr
-			
+
 			log.Printf("Player %s played attribute %s for card %s", currentPlayer.ID, attr, currentPlayer.Card.Name)
 
 			// Resolve the round immediately when current player plays
 			if len(currentRoom.Players) == 2 {
 				p1 := currentRoom.Players[0]
 				p2 := currentRoom.Players[1]
-				
+
 				// Automatically resolve the round using both players' top cards
 				// The current player's card is already set, now set the opponent's card
 				opponentIndex := 1 - playerIndex
 				opponent := currentRoom.Players[opponentIndex]
-				
+
 				// Set opponent's card (they don't need to choose attribute, use a default or random one)
 				opponent.Card = &opponent.Deck[0]
 				// For now, use the same attribute as the current player
 				opponent.Attr = attr
-				
-				log.Printf("Resolving round: %s vs %s with attribute %s", 
+
+				log.Printf("Resolving round: %s vs %s with attribute %s",
 					currentPlayer.Card.Name, opponent.Card.Name, attr)
-				
+
 				// Resolve the round
 				resolveRound(currentRoom, p1, p2)
 
@@ -211,7 +210,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				p1.Card, p1.Attr = nil, ""
 				p2.Card, p2.Attr = nil, ""
 				currentRoom.Round++
-				
+
 				// Note: TurnIndex will be set by resolveRound based on winner
 			}
 		}
@@ -223,14 +222,14 @@ func startGame(room *GameRoom) {
 	// Reset game state
 	room.Round = 1
 	room.TurnIndex = rand.Intn(2)
-	
+
 	// Clear any existing game state
 	for _, p := range room.Players {
 		p.Deck = nil
 		p.Card = nil
 		p.Attr = ""
 	}
-	
+
 	// Shuffle and deal cards
 	shuffled := append([]Card{}, Deck...)
 	rand.Seed(time.Now().UnixNano())
@@ -254,7 +253,7 @@ func startGame(room *GameRoom) {
 			log.Println("Error sending start message:", err)
 		}
 	}
-	
+
 	log.Printf("Game started/restarted in room %s", room.ID)
 }
 
@@ -262,7 +261,7 @@ func startGame(room *GameRoom) {
 func removePlayerFromRoom(room *GameRoom, playerID string) {
 	room.Mutex.Lock()
 	defer room.Mutex.Unlock()
-	
+
 	// Find and remove the player
 	for i, p := range room.Players {
 		if p.ID == playerID {
@@ -271,7 +270,7 @@ func removePlayerFromRoom(room *GameRoom, playerID string) {
 			break
 		}
 	}
-	
+
 	// If room is empty, remove it entirely
 	if len(room.Players) == 0 {
 		roomsMutex.Lock()
@@ -358,8 +357,6 @@ func resolveRound(room *GameRoom, p1, p2 *Player) {
 
 func main() {
 	http.HandleFunc("/ws", wsHandler)
-	
-	// Status endpoint for monitoring
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		roomsMutex.Lock()
 		defer roomsMutex.Unlock()
@@ -380,15 +377,10 @@ func main() {
 			room.Mutex.Unlock()
 		}
 
-		// Convert to JSON properly
-		json.NewEncoder(w).Encode(status)
+		fmt.Fprintf(w, "%v", status)
 	})
 
-	fmt.Println("✅ Server started on 0.0.0.0:8080")
-	fmt.Println("🌐 Accessible at:")
-	fmt.Println("   - Local: http://localhost:8080")
-	fmt.Println("   - Network: http://10.8.183.4:8080")
-	fmt.Println("   - WebSocket: ws://10.8.183.4:8080/ws")
+	fmt.Println("✅ Server started on :8080")
 	fmt.Println("📊 Status endpoint available at /status")
-	log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }

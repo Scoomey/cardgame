@@ -1,0 +1,7 @@
+<svg width="150" height="150" viewBox="0 0 150 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="150" height="150" fill="#45B7D1" rx="10"/>
+<text x="75" y="80" font-family="Arial" font-size="16" fill="white" text-anchor="middle">🦅 Griffin</text>
+<text x="75" y="100" font-family="Arial" font-size="12" fill="white" text-anchor="middle">Strength: 80</text>
+<text x="75" y="115" font-family="Arial" font-size="12" fill="white" text-anchor="middle">Speed: 70</text>
+<text x="75" y="130" font-family="Arial" font-size="12" fill="white" text-anchor="middle">Magic: 60</text>
+</svg>
