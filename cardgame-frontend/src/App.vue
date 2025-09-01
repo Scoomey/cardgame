@@ -64,7 +64,16 @@
           
           <div class="card-container your-card">
             <div class="card-image">
-              <img :src="myTopCard.image" :alt="myTopCard.name" />
+              <img 
+                :src="myTopCard.image" 
+                :alt="myTopCard.name" 
+                @error="handleImageError"
+                @load="handleImageLoad"
+                style="border: 2px solid #ffd700;"
+              />
+              <div v-if="imageError" class="image-error">
+                ❌ Image failed to load
+              </div>
             </div>
             <h4 class="card-name">{{ myTopCard.name }}</h4>
             
@@ -106,7 +115,16 @@
           
           <div class="card-container opponent-card">
             <div class="card-image">
-              <img :src="opponentTopCard.image" :alt="opponentTopCard.name" />
+              <img 
+                :src="opponentTopCard.image" 
+                :alt="opponentTopCard.name" 
+                @error="handleImageError"
+                @load="handleImageLoad"
+                style="border: 2px solid #ff6b6b;"
+              />
+              <div v-if="imageError" class="image-error">
+                ❌ Image failed to load
+              </div>
             </div>
             <h4 class="card-name">{{ opponentTopCard.name }}</h4>
             <div class="opponent-stats">
@@ -148,6 +166,7 @@ const connected = ref(false)
 const roomId = ref("")
 const playerName = ref("")
 const currentRound = ref(1)
+const imageError = ref(false)
 
 let ws
 
@@ -192,6 +211,11 @@ function joinGame() {
         winner.value = null
         gameOver.value = null
         currentRound.value = 1
+        imageError.value = false
+        
+        // Debug: Log the image URLs
+        console.log("Your card image URL:", myTopCard.value?.image)
+        console.log("Opponent card image URL:", opponentTopCard.value?.image)
         break
 
       case "roundResult":
@@ -223,6 +247,24 @@ function playAttribute(attr){
     attribute: attr
   }))
   yourTurn.value = false
+}
+
+// Handle image loading errors
+function handleImageError(event) {
+  console.error("Image failed to load:", event.target.src)
+  
+  // Try fallback image
+  if (!event.target.src.includes('fallback')) {
+    event.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgdmlld0JveD0iMCAwIDE1MCAxNTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjE1MCIgaGVpZ2h0PSIxNTAiIGZpbGw9IiM2NjYiIHJ4PSIxMCIvPjx0ZXh0IHg9Ijc1IiB5PSI3NSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+Q2FyZCBJbWFnZTwvdGV4dD48L3N2Zz4='
+  } else {
+    imageError.value = true
+  }
+}
+
+// Handle successful image loading
+function handleImageLoad(event) {
+  console.log("Image loaded successfully:", event.target.src)
+  imageError.value = false
 }
 </script>
 
@@ -480,6 +522,16 @@ function playAttribute(attr){
   height: 150px;
   border-radius: 15px;
   box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+.image-error {
+  color: #ff6b6b;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(255, 107, 107, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 107, 107, 0.3);
 }
 
 .card-name {
